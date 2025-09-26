@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>History Finder — Search anything about history</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--muted:#94a3b8;--accent:#7c3aed;--glass:rgba(255,255,255,0.03)}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,'Helvetica Neue',Arial;background:linear-gradient(180deg,#071126 0%, #071a2b 100%);color:#e6eef8;min-height:100vh;}
+    .wrap{max-width:1100px;margin:36px auto;padding:20px}
+    header{display:flex;gap:16px;align-items:center}
+    h1{margin:0;font-size:1.6rem;letter-spacing:-0.5px}
+    p.lead{margin:4px 0 0;color:var(--muted)}
+
+    .search-bar{display:flex;gap:8px;margin-top:20px}
+    input[type="search"]{flex:1;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,255,255,0.06);background:var(--card);color:inherit;font-size:1rem}
+    button{padding:10px 14px;border-radius:10px;border:0;background:linear-gradient(90deg,var(--accent),#4f46e5);color:white;font-weight:600;cursor:pointer}
+
+    .controls{display:flex;gap:8px;align-items:center;margin-top:12px}
+    select,input[type=number]{padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:var(--glass);color:inherit}
+    .grid{display:grid;grid-template-columns:1fr 340px;gap:18px;margin-top:22px}
+
+    .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:12px;padding:14px;border:1px solid rgba(255,255,255,0.03)}
+    .results{display:flex;flex-direction:column;gap:10px}
+    .result{padding:12px;border-radius:10px;background:transparent;border:1px solid rgba(255,255,255,0.03);cursor:pointer}
+    .result h3{margin:0;font-size:1rem}
+    .result p{margin:6px 0 0;color:var(--muted);font-size:0.9rem}
+
+    .timeline{margin-top:12px}
+    .decade{display:flex;gap:10px;align-items:center;margin-bottom:10px}
+    .dot{width:36px;height:36px;border-radius:10px;background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;font-weight:700}
+
+    aside .card h3{margin-top:0}
+    .bookmark-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+    .small{font-size:0.85rem;color:var(--muted)}
+
+    footer{margin-top:24px;color:var(--muted);font-size:0.85rem}
+    @media (max-width:900px){.grid{grid-template-columns:1fr;}.wrap{padding:12px}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>History Finder</h1>
+        <p class="lead">Search articles, events, and people across history. Powered by Wikipedia's open API.</p>
+      </div>
+    </header>
+
+    <div class="search-bar">
+      <input id="query" type="search" placeholder="Search an event, person, war, invention, year... e.g. ""Battle of Hastings"" or "1945"" />
+      <button id="searchBtn">Search</button>
+      <button id="randomBtn" title="Surprise me">🎲</button>
+    </div>
+
+    <div class="controls">
+      <label class="small">Limit
+        <select id="limit">
+          <option value="10">10</option>
+          <option value="20">20</option>
+          <option value="50">50</option>
+        </select>
+      </label>
+
+      <label class="small">Filter by year range
+        <input id="yearFrom" type="number" placeholder="From (e.g. 1800)" style="width:110px" />
+      </label>
+      <label class="small">to
+        <input id="yearTo" type="number" placeholder="To (e.g. 1900)" style="width:110px" />
+      </label>
+
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <button id="viewBookmarks">Bookmarks</button>
+        <button id="clearBtn">Clear</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <main>
+        <div class="card">
+          <div id="status" class="small">Enter a search term and press Search — try "Renaissance", "World War II", or a year like "1066".</div>
+          <div id="results" class="results" style="margin-top:12px"></div>
+        </div>
+
+        <div class="card timeline">
+          <h3>Timeline (extracted from search results)</h3>
+          <div id="timelineArea"></div>
+        </div>
+      </main>
+
+      <aside>
+        <div class="card">
+          <h3>Details</h3>
+          <div id="details" class="small">Click a result to see the extract and quick links. You can save items to Bookmarks.</div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <h3>Bookmarks</h3>
+          <div id="bookmarks" class="bookmark-list small"></div>
+          <div style="margin-top:8px"><button id="clearBookmarks">Clear bookmarks</button></div>
+        </div>
+      </aside>
+    </div>
+
+    <footer>
+      Tip: This is a static front-end that queries Wikipedia's public API. Results depend on Wikipedia content and availability.
+    </footer>
+  </div>
+
+<script>
+const resultsEl = document.getElementById('results');
+const statusEl = document.getElementById('status');
+const detailsEl = document.getElementById('details');
+const timelineEl = document.getElementById('timelineArea');
+const bookmarksEl = document.getElementById('bookmarks');
+const queryInput = document.getElementById('query');
+const limitSelect = document.getElementById('limit');
+const yearFrom = document.getElementById('yearFrom');
+const yearTo = document.getElementById('yearTo');
+
+const WIKIPEDIA_API = 'https://en.wikipedia.org/w/api.php';
+
+function setStatus(t){statusEl.textContent = t}
+
+async function searchWikipedia(q, limit=10){
+  if(!q) return {pages:[]};
+  const params = new URLSearchParams({
+    action: 'query',
+    format: 'json',
+    origin: '*',
+    prop: 'extracts|pageimages',
+    exintro: 1,
+    explaintext: 1,
+    piprop: 'thumbnail',
+    pithumbsize: 200,
+    generator: 'search',
+    gsrsearch: q,
+    gsrlimit: limit
+  });
+  const url = WIKIPEDIA_API + '?' + params.toString();
+  const res = await fetch(url).then(r=>r.json());
+  if(!res.query) return {pages:[]};
+  const pages = Object.values(res.query.pages).sort((a,b)=>a.index - b.index);
+  return {pages};
+}
+
+function extractYears(text){
+  if(!text) return [];
+  // find 3-4 digit years between 1000 BCE and 2100 CE roughly; handle BCE like "200 BC" or "200 BCE"
+  const years = new Set();
+  const re1 = /(\b\d{3,4})\b/g; // simple 3-4 digit
+  let m;
+  while((m=re1.exec(text))!==null){
+    years.add(m[1]);
+  }
+  const reBC = /(\b\d{1,4})\s*(BCE|BC)\b/gi;
+  while((m=reBC.exec(text))!==null){ years.add(m[1] + ' BC'); }
+  return Array.from(years);
+}
+
+function renderResults(pages){
+  resultsEl.innerHTML='';
+  if(!pages.length){ resultsEl.innerHTML='<div class="small">No results.</div>'; return; }
+
+  pages.forEach(p=>{
+    const div = document.createElement('div');
+    div.className='result';
+    div.innerHTML = `<h3>${escapeHtml(p.title)}</h3><p>${escapeHtml(p.extract || '')}</p>`;
+    div.onclick = ()=> showDetails(p);
+    resultsEl.appendChild(div);
+  });
+}
+
+function showDetails(p){
+  const url = 'https://en.wikipedia.org/?curid=' + p.pageid;
+  detailsEl.innerHTML = `<strong>${escapeHtml(p.title)}</strong><p class="small">${escapeHtml(p.extract || 'No extract')}</p>
+  <div style="margin-top:8px"><a href="${url}" target="_blank">Open full article on Wikipedia</a></div>
+  <div style="margin-top:8px"><button id="saveBtn">Save to bookmarks</button></div>`;
+  document.getElementById('saveBtn').onclick = ()=>{ saveBookmark(p); };
+}
+
+function escapeHtml(s){ return s? s.replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[c]) : '' }
+
+function renderTimeline(pages){
+  timelineEl.innerHTML='';
+  const buckets = {};
+  pages.forEach(p=>{
+    const yrs = extractYears((p.extract||'') + ' ' + (p.title||''));
+    let year = yrs.length? yrs[0] : 'unknown';
+    // normalize year like 1945 -> 1940s
+    let key = 'unknown';
+    if(year.match(/\d+/)){
+      const ynum = parseInt(year.replace(/[^0-9]/g,''));
+      const decade = Math.floor(ynum/10)*10;
+      key = decade + 's';
+    }
+    buckets[key] = buckets[key] || [];
+    buckets[key].push(p);
+  });
+
+  const keys = Object.keys(buckets).sort((a,b)=> (a==='unknown'?1:0) - (b==='unknown'?1:0) || a.localeCompare(b));
+  keys.forEach(k=>{
+    const box = document.createElement('div');
+    box.className='decade';
+    box.innerHTML = `<div class="dot">${escapeHtml(k)}</div><div style="flex:1"><div class="small">${buckets[k].slice(0,5).map(x=>escapeHtml(x.title)).join(', ')}</div></div>`;
+    timelineEl.appendChild(box);
+  });
+}
+
+function saveBookmark(p){
+  const stored = JSON.parse(localStorage.getItem('hf_bookmarks')||'[]');
+  if(stored.find(x=>x.pageid===p.pageid)) return alert('Already saved');
+  stored.unshift({pageid:p.pageid,title:p.title,extract:p.extract});
+  localStorage.setItem('hf_bookmarks', JSON.stringify(stored));
+  loadBookmarks();
+}
+
+function loadBookmarks(){
+  const stored = JSON.parse(localStorage.getItem('hf_bookmarks')||'[]');
+  bookmarksEl.innerHTML='';
+  if(!stored.length) { bookmarksEl.innerHTML='<div class="small">No bookmarks yet.</div>'; return; }
+  stored.forEach(b=>{
+    const div = document.createElement('div');
+    div.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div><strong>${escapeHtml(b.title)}</strong><div class="small">${escapeHtml((b.extract||'').slice(0,140))}...</div></div><div><button data-id="${b.pageid}" class="openB">Open</button> <button data-id="${b.pageid}" class="delB">✖</button></div></div>`;
+    bookmarksEl.appendChild(div);
+  });
+  bookmarksEl.querySelectorAll('.delB').forEach(btn=>btn.onclick = e=>{
+    const id = parseInt(btn.getAttribute('data-id'));
+    const filtered = JSON.parse(localStorage.getItem('hf_bookmarks')||'[]').filter(x=>x.pageid!==id);
+    localStorage.setItem('hf_bookmarks', JSON.stringify(filtered));
+    loadBookmarks();
+  });
+  bookmarksEl.querySelectorAll('.openB').forEach(btn=>btn.onclick = e=>{
+    const id = btn.getAttribute('data-id');
+    window.open('https://en.wikipedia.org/?curid=' + id, '_blank');
+  });
+}
+
+async function doSearch(){
+  const q = queryInput.value.trim();
+  const limit = parseInt(limitSelect.value,10);
+  if(!q) { setStatus('Please enter a search.'); return; }
+  setStatus('Searching Wikipedia...');
+  try{
+    const {pages} = await searchWikipedia(q, limit);
+    // optional year filtering
+    let filtered = pages;
+    const from = parseInt(yearFrom.value||'',10);
+    const to = parseInt(yearTo.value||'',10);
+    if(!isNaN(from) || !isNaN(to)){
+      filtered = pages.filter(p => {
+        const yrs = extractYears((p.extract||'') + ' ' + (p.title||''));
+        if(!yrs.length) return false;
+        const ynum = parseInt(yrs[0].replace(/[^0-9]/g,''));
+        if(isNaN(ynum)) return false;
+        if(!isNaN(from) && ynum < from) return false;
+        if(!isNaN(to) && ynum > to) return false;
+        return true;
+      });
+    }
+    renderResults(filtered);
+    renderTimeline(filtered);
+    setStatus(`Showing ${filtered.length} results for "${q}"`);
+  }catch(err){
+    console.error(err); setStatus('Error fetching from Wikipedia.');
+  }
+}
+
+async function randomArticle(){
+  setStatus('Fetching a random article...');
+  try{
+    const r = await fetch('https://en.wikipedia.org/w/api.php?action=query&format=json&origin=*&list=random&rnlimit=1').then(r=>r.json());
+    const title = r.query.random[0].title;
+    queryInput.value = title;
+    doSearch();
+  }catch(e){ setStatus('Could not get random article.'); }
+}
+
+function clearAll(){ resultsEl.innerHTML=''; detailsEl.innerHTML=''; timelineEl.innerHTML=''; setStatus('Cleared.'); }
+
+// events
+document.getElementById('searchBtn').onclick = doSearch;
+queryInput.addEventListener('keydown', e=>{ if(e.key === 'Enter') doSearch(); });
+document.getElementById('randomBtn').onclick = randomArticle;
+document.getElementById('clearBtn').onclick = clearAll;
+document.getElementById('viewBookmarks').onclick = ()=>{ loadBookmarks(); alert('Bookmarks loaded on the right pane.'); };
+document.getElementById('clearBookmarks').onclick = ()=>{ if(confirm('Clear all bookmarks?')){ localStorage.removeItem('hf_bookmarks'); loadBookmarks(); }};
+
+// initial
+loadBookmarks();
+
+</script>
+</body>
+</html>
